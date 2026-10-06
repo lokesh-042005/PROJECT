@@ -1,40 +1,26 @@
-`timescale 1ns/1ps
+module dig_clk_tb;
+reg clk;
+reg rst;
+wire [6:0]seg;
+wire [3:0]an;
 
-module digital_timer_tb;
+top_module uut(.clk(clk),.rst(rst),.seg(seg),.an(an));
 
-    reg clk = 0;
-    reg reset;
-    wire [6:0] seg;
-    wire [3:0] anode;
+always #10 clk=~clk;
 
-    digital_timer_top #(
-        .COUNT_MAX   (26'd9),
-        .REFRESH_MAX (16'd4)
-    ) uut (
-        .clk   (clk),
-        .reset (reset),
-        .seg   (seg),
-        .anode (anode)
-    );
+initial begin
+clk=0;
+rst=1;
+#100;
+rst=0;
 
-    always #10 clk = ~clk;
-
-    initial begin
-        reset = 1;
-        #100;
-        reset = 0;
-
-        #30000;
-
-        $display("Final state: minutes=%0d seconds=%0d", uut.minutes, uut.seconds);
-        $finish;
-    end
-
-    always @(uut.tick) begin
-        if (uut.tick)
-            $display("time=%0t reset=%b tick=%b min=%0d sec=%0d seg=%b anode=%b",
-                      $time, reset, uut.tick, uut.minutes, uut.seconds,
-                      seg, anode);
-    end
+#200000;
+$finish;
+end
+initial begin
+$monitor("time=%0t rst=%b min=%0d sec=%0d ",$time,rst,uut.u2.min,uut.u2.sec);
+$dumpfile("digital_clk.vcd");
+$dumpvars;
+end
 
 endmodule
