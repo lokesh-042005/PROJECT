@@ -1,92 +1,141 @@
-module uart_tx (
-    input  wire       clk,
-    input  wire       rst,
-    input  wire        tick,
-    input  wire        tx_start,
-    input  wire [7:0]  tx_data,
-    output reg         tx_busy,
-    output reg         TX
+module transmiter #(parameter integer clock = 50000000, baudrate = 115200)
+(
+    input clk,
+    input rst,
+    input tx_start,
+    input [7:0] tx_data,
+    input parity_en,
+    output reg tx,
+    output reg tx_busy
 );
 
-    localparam IDLE  = 2'd0;
-    localparam START = 2'd1;
-    localparam DATA  = 2'd2;
-    localparam STOP  = 2'd3;
+localparam integer t_bit = (clock/baudrate);
 
-    reg [1:0] state;
-    reg [3:0] tick_cnt;
-    reg [2:0] bit_cnt;
-    reg [7:0] shift_reg;
+reg [2:0] state, next;
+reg [15:0] baudcount; // Increased to 16 bits to prevent overflow
+reg [2:0] bitcount;
+reg [7:0] shift_reg;
+reg parity;
 
-    always @(posedge clk) begin
-        if (rst) begin
-            state    <= IDLE;
-            TX       <= 1'b1;
-            tx_busy  <= 1'b0;
-            tick_cnt <= 4'd0;
-            bit_cnt  <= 3'd0;
-        end else begin
-            case (state)
+localparam tx_idle = 3'd0, tx__start = 3'd1, tx__data = 3'd2, tx_parity = 3'd3, tx_stop = 3'd4;
 
-                IDLE: begin
-                    TX <= 1'b1;
-                    if (tx_start) begin
-                        shift_reg <= tx_data;
-                        tx_busy   <= 1'b1;
-                        tick_cnt  <= 4'd0;
-                        state     <= START;
-                    end else begin
-                        tx_busy <= 1'b0;
-                    end
-                end
+always@(posedge clk or posedge rst) begin
+    if(rst)
+        state <= tx_idle;
+    else 
+        state <= next;
+end
 
-                START: begin
-                    TX <= 1'b0;
-                    if (tick) begin
-                        if (tick_cnt == 4'd15) begin
-                            tick_cnt <= 4'd0;
-                            bit_cnt  <= 3'd0;
-                            state    <= DATA;
-                        end else begin
-                            tick_cnt <= tick_cnt + 1'b1;
-                        end
-                    end
-                end
-
-                DATA: begin
-                    TX <= shift_reg[0];
-                    if (tick) begin
-                        if (tick_cnt == 4'd15) begin
-                            tick_cnt  <= 4'd0;
-                            shift_reg <= shift_reg >> 1;
-                            if (bit_cnt == 3'd7) begin
-                                state <= STOP;
-                            end else begin
-                                bit_cnt <= bit_cnt + 1'b1;
-                            end
-                        end else begin
-                            tick_cnt <= tick_cnt + 1'b1;
-                        end
-                    end
-                end
-
-                STOP: begin
-                    TX <= 1'b1;
-                    if (tick) begin
-                        if (tick_cnt == 4'd15) begin
-                            tick_cnt <= 4'd0;
-                            tx_busy  <= 1'b0;
-                            state    <= IDLE;
-                        end else begin
-                            tick_cnt <= tick_cnt + 1'b1;
-                        end
-                    end
-                end
-
-                default: state <= IDLE;
-
-            endcase
-        end
+always @(posedge clk or posedge rst) begin
+    if (rst) begin
+        baudcount <= 0;
+        bitcount  <= 0;
     end
+    else if (state == tx_idle) begin
+        baudcount <= 0;
+        bitcount <= 0;
+    end
+    else begin
+        if (baudcount == t_bit-1) begin
+            baudcount <= 0;
+            if(state == tx__data) begin
+                if (bitcount < 3'd7)
+                    bitcount <= bitcount + 1;
+            end
+        end
+        else begin
+            baudcount <= baudcount + 1;
+        end  
+    end
+end
+
+always@(posedge clk or posedge rst) begin
+    if(rst)
+        parity <= 0;
+    else if(state == tx_idle && tx_start) begin
+        if(parity_en) begin
+            // Hardcoded strictly to EVEN parity
+            parity <= ^tx_data;
+        end
+        else
+            parity <= 0;
+    end
+end
+
+always@(posedge clk or posedge rst) begin
+    if(rst)
+        shift_reg <= 0;
+    else begin
+        if (state == tx_idle && tx_start)
+            shift_reg <= tx_data;
+        else if (baudcount == t_bit-1 && state == tx__data)
+            shift_reg <= {1'b0, shift_reg[7:1]}; // Safely shifting in a 0 instead of tx_data[0]
+    end	
+end
+
+always@(*) begin
+    case(state)
+        tx_idle: begin
+            tx = 1;
+            tx_busy = 0;
+            if (tx_start)
+                next = tx__start;
+            else
+                next = tx_idle;
+        end
+
+        tx__start: begin
+            tx = 0;
+            tx_busy = 1;
+            if (baudcount == t_bit-1)
+                next = tx__data;
+            else
+                next = tx__start;
+        end
+
+        tx__data: begin
+            tx = shift_reg[0];
+            tx_busy = 1;
+            if (baudcount == t_bit-1) begin
+                if (bitcount == 3'd7) begin
+                    if (parity_en)
+                        next = tx_parity;
+                    else
+                        next = tx_stop;
+                end
+                else begin
+                    next = tx__data;
+                end
+            end
+            else begin
+                next = tx__data;
+            end
+        end
+
+        tx_parity: begin
+            tx = parity;
+            tx_busy = 1;
+            if(baudcount == t_bit-1)
+                next = tx_stop;
+            else
+                next = tx_parity;
+        end
+
+        tx_stop: begin
+            tx = 1;
+            tx_busy = 1;
+            if (baudcount == t_bit-1)
+                next = tx_idle;
+            else
+                next = tx_stop;
+        end
+        
+        default : begin
+            tx = 1;
+            tx_busy = 0;
+            next = tx_idle;
+        end
+    endcase
+end
 
 endmodule
