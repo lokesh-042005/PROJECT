@@ -1,4 +1,4 @@
-module receiver #(parameter integer clock = 50000000, baudrate = 115200) // Synced default clock with transmitter
+module receiver #(parameter integer clock = 100000000, baudrate = 115200) // Synced default clock with transmitter
 (
     input clk,
     input rst,
